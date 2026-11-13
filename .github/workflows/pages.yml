@@ -1,0 +1,71 @@
+name: Publish archive mirror
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Build static archive
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --location --retry 3 --max-time 30 'https://partarhive.vercel.app/ai/?section=places' -o /tmp/archive.html
+          python3 - <<'PY'
+          from pathlib import Path
+          from html import escape, unescape
+          import re
+          root = Path('site')
+          root.mkdir()
+          source = Path('/tmp/archive.html').read_text()
+          origin = 'https://partarhive.vercel.app'
+          base = 'https://lordkryz.github.io/partarhive-mirror/'
+          items = []
+          for slug, title, content in re.findall(r'<article id="([a-z0-9-]+)"><h2>(.*?)</h2>(.*?)</article>', source, re.S):
+              url = origin + '/places/' + slug + '/'
+              blocks = re.findall(r'<(p|h3)(?: class="article-text")?>([^<]*)</\1>', content, re.S)
+              if not blocks:
+                  raise ValueError('Empty article: ' + slug)
+              body = ''.join(f'<{("h2" if tag == "h3" else tag)}>{escape(unescape(text))}</{("h2" if tag == "h3" else tag)}>' for tag, text in blocks)
+              items.append((slug, unescape(title), url, body, '\n\n'.join(unescape(text) for _, text in blocks)))
+          if not items or len({i[0] for i in items}) != len(items):
+              raise ValueError('Missing or duplicate articles')
+          def page(title, content, canonical=None):
+              canon = f'<link rel="canonical" href="{escape(canonical)}">' if canonical else ''
+              return f'<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)}</title>{canon}<style>body{{max-width:50rem;margin:2rem auto;padding:0 1rem;font:1.1rem/1.6 system-ui;color:#192c24;background:#faf9f3}}p{{white-space:pre-wrap;overflow-wrap:anywhere}}li{{margin:.4rem 0}}a{{color:#145b44}}article{{border-top:1px solid #bbb;margin-top:2rem}}</style><main><h1>{escape(title)}</h1>{content}</main></html>'
+          def write(name, content):
+              (root / name).write_text(content, encoding='utf-8')
+          def link(url, title):
+              return f'<a href="{escape(url)}">{escape(title)}</a>'
+          menu = '<p>' + ' · '.join([link('./', 'Оглавление'), link('all.html', 'Все тексты'), link('articles.txt', 'TXT'), link(origin+'/books/', 'Книги'), link(origin+'/', 'Основной сайт')]) + '</p>'
+          toc = '<ol>' + ''.join('<li>'+link(slug+'.html', title)+'</li>' for slug,title,*_ in items) + '</ol>'
+          write('index.html', page('Партенит | Цифровой архив', menu+f'<p>Текстовое зеркало. Статей: {len(items)}.</p>'+toc))
+          combined = []
+          for slug,title,url,body,plain in items:
+              original = '<p>'+link(url, 'Оригинал статьи')+'</p>'
+              write(slug+'.html', page(title, menu+original+body, url))
+              combined.append(f'<article id="{slug}"><h2>{escape(title)}</h2>{original}{body}</article>')
+          jumps = '<ol>' + ''.join('<li>'+link('#'+slug,title)+'</li>' for slug,title,*_ in items) + '</ol>'
+          write('all.html', page('Все статьи о Партените', menu+jumps+''.join(combined)))
+          write('articles.txt', '\n\n' .join(title+'\n'+url+'\n\n'+plain for _,title,url,_,plain in items))
+          urls = ['', 'all.html'] + [i[0]+'.html' for i in items]
+          write('sitemap.xml', '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+''.join('<url><loc>'+base+u+'</loc></url>' for u in urls)+'</urlset>')
+          print(f'Exported {len(items)} articles')
+          PY
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
