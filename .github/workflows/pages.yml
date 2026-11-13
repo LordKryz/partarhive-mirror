@@ -48,7 +48,7 @@ jobs:
               (root / name).write_text(content, encoding='utf-8')
           def link(url, title):
               return f'<a href="{escape(url)}">{escape(title)}</a>'
-          menu = '<p>' + ' · '.join([link('./', 'Оглавление'), link('all.html', 'Все тексты'), link('articles.txt', 'TXT'), link(origin+'/books/', 'Книги'), link(origin+'/', 'Основной сайт')]) + '</p>'
+          menu = '<p>' + ' · '.join([link('./', 'Оглавление'), link('all.html', 'Все тексты'), link('articles.txt', 'TXT'), link('books.html', 'Книги'), link(origin+'/', 'Основной сайт')]) + '</p>'
           toc = '<ol>' + ''.join('<li>'+link(slug+'.html', title)+'</li>' for slug,title,*_ in items) + '</ol>'
           write('index.html', page('Партенит | Цифровой архив', menu+f'<p>Текстовое зеркало. Статей: {len(items)}.</p>'+toc))
           combined = []
@@ -60,6 +60,53 @@ jobs:
           write('all.html', page('Все статьи о Партените', menu+jumps+''.join(combined)))
           write('articles.txt', '\n\n' .join(title+'\n'+url+'\n\n'+plain for _,title,url,_,plain in items))
           urls = ['', 'all.html'] + [i[0]+'.html' for i in items]
+          import json
+          from urllib.request import urlopen
+          from time import sleep
+          def fetch(path):
+              for attempt in range(3):
+                  try:
+                      with urlopen(origin + path, timeout=30) as response:
+                          return response.read()
+                  except OSError:
+                      if attempt == 2:
+                          raise
+                      sleep(2 ** attempt)
+          books = json.loads(fetch('/books/index.json'))['books']
+          if not books:
+              raise ValueError('Empty book catalogue')
+          book_links = []
+          for book in books:
+              original = book['read_url']
+              match = re.fullmatch(re.escape(origin) + r'/books/(book-[a-f0-9-]+)/', original)
+              if not match:
+                  raise ValueError('Unexpected book URL: ' + original)
+              slug = match[1]
+              raw = fetch('/books/' + slug + '/text/')
+              txt = raw.decode('utf-8-sig')
+              marks = list(re.finditer(r'^## Страница (\d+)(?:[^\S\r\n]+\|[^\r\n]*)?[ \t]*\r?$', txt, re.M))
+              numbers = [int(m[1]) for m in marks]
+              if numbers != book['published_page_numbers'] or len(numbers) != book['published_page_count']:
+                  raise ValueError(f'Printed page numbering does not match catalogue: {slug}; {numbers}')
+              title = book['title']
+              author = book['author']
+              year = str(book['publication_year'])
+              book_links.append('<li>' + link(slug+'.html', title) + f' — {escape(author)}, {escape(year)}; страниц в архиве: {len(numbers)}.</li>')
+              (root / (slug + '.txt')).write_bytes(raw)
+              intro = '<p>' + escape(txt[:marks[0].start()].strip()) + '</p>'
+              nav = '<p>' + link(slug+'.txt', 'Скачать TXT') + ' · ' + link(original, 'Оригинал в архиве') + '</p>'
+              contents = '<nav aria-label="Печатные страницы">' + ' · '.join(link(f'#page-{n}', str(n)) for n in numbers) + '</nav>'
+              pages = []
+              for idx, mark in enumerate(marks):
+                  end = marks[idx+1].start() if idx+1 < len(marks) else len(txt)
+                  heading = escape(mark[0].strip().removeprefix('## '))
+                  paragraphs = ''.join('<p>' + escape(p) + '</p>' for p in re.split(r'\r?\n\s*\r?\n', txt[mark.end():end].strip()))
+                  pages.append(f'<section id="page-{mark[1]}"><h2>{heading}</h2>{paragraphs}</section>')
+              write(slug+'.html', page(title, menu+nav+intro+contents+''.join(pages), original))
+              urls.append(slug+'.html')
+              print(f'Exported {len(numbers)} printed pages: {title}')
+          write('books.html', page('Краеведческие книги о Партените', menu+'<p>Оцифрованные материалы с печатной нумерацией. В архиве опубликованы фрагменты изданий.</p><ul>'+''.join(book_links)+'</ul>'))
+          urls.append('books.html')
           write('sitemap.xml', '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+''.join('<url><loc>'+base+u+'</loc></url>' for u in urls)+'</urlset>')
           print(f'Exported {len(items)} articles')
           PY
