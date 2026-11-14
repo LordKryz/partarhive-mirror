@@ -28,6 +28,7 @@ jobs:
           import re
           root = Path('site')
           root.mkdir()
+          (root / "google701e8d2a11907aa9.html").write_text("google-site-verification: google701e8d2a11907aa9.html\n", encoding="utf-8")
           source = Path('/tmp/archive.html').read_text()
           origin = 'https://partarhive.vercel.app'
           base = 'https://lordkryz.github.io/partarhive-mirror/'
