@@ -28,6 +28,7 @@ jobs:
           import re
           root = Path('site')
           root.mkdir()
+          (root / "BingSiteAuth.xml").write_text("<?xml version=\"1.0\"?>\n<users>\n\t<user>B5F4D9A601A1C95F6AA7E78CC716B7A5</user>\n</users>", encoding="utf-8")
           (root / "google701e8d2a11907aa9.html").write_text("google-site-verification: google701e8d2a11907aa9.html\n", encoding="utf-8")
           source = Path('/tmp/archive.html').read_text()
           origin = 'https://partarhive.vercel.app'
